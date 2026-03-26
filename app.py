@@ -34,10 +34,11 @@ QUOTA_CACHE_DURATION = 600  # 10 minutes cache for quota
 # Global state for client metrics
 CLIENT_METRICS: List[Dict[str, Any]] = []
 METRICS_LOCK = threading.Lock()
-POLL_INTERVAL = 5  # Seconds (user preference)
+# Separate lock for alert tracking and state management
+STATE_LOCK = threading.Lock()
+POLL_INTERVAL = 5  # Seconds
 
-# Email configuration (Optional - Fill to enable alerts)
-# Best to use App Passwords for Gmail
+# Email configuration
 EMAIL_CONFIG = {
     "enabled": False,  # Set to True when ready to use
     "smtp_server": "smtp.gmail.com",
@@ -47,12 +48,10 @@ EMAIL_CONFIG = {
     "receiver_email": "RECIPIENT_EMAIL@example.com"
 }
 
-# Alert tracking to avoid spamming (Node ID -> Last Alert Time)
+# Shared tracking dictionaries (Must be protected by STATE_LOCK)
 LAST_ALERTS: Dict[str, datetime] = {}
-# Track when a POC first went offline to calculate total downtime
 OFFLINE_START: Dict[str, datetime] = {}
-# Track when a node recovery alert was last sent
-RECOVERY_ALERTS: Dict[str, bool] = {}
+LAST_STATE: Dict[str, Dict[str, Any]] = {}
 ALERT_COOLDOWN = timedelta(hours=1) 
 
 def format_duration(delta: timedelta) -> str:
@@ -174,15 +173,13 @@ def log_telemetry(results: List[Dict[str, Any]]):
                 current_status = r['status']
                 current_anydesk = r['anydesk_status']
                 
-                # Check if state has changed (Only recording on Status transitions as requested)
-                last = LAST_STATE.get(client_id)
-                if last and last['status'] == current_status:
-                    continue
-                
-                # Update last state
-                LAST_STATE[client_id] = {
-                    'status': current_status
-                }
+                # Check if state has changed under lock
+                with STATE_LOCK:
+                    last = LAST_STATE.get(client_id)
+                    if last and last['status'] == current_status:
+                        continue
+                    # Update last state
+                    LAST_STATE[client_id] = { 'status': current_status }
                 
                 conn.execute('''
                     INSERT INTO telemetry (client_id, node_name, status, anydesk_status, cpu_usage, memory_usage)
@@ -190,8 +187,10 @@ def log_telemetry(results: List[Dict[str, Any]]):
                 ''', (client_id, r['name'], current_status, current_anydesk, r['cpu_usage'], r['memory_usage']))
                 logger.info(f"LOGGED STATE CHANGE: {r['name']} is now {current_status.upper()}")
             conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database logging error: {e}")
     except Exception as e:
-        print(f"Database logging error: {e}")
+        logger.error(f"Unexpected logging error: {e}")
 
 def rotate_data():
     """
@@ -355,38 +354,39 @@ def update_metrics_loop():
             # Log to history database
             log_telemetry(results)
             
-            # Check for offline locations and send alerts
+            # Check for offline locations and send alerts under lock
             for r in results:
                 node_id = r['id']
                 is_actually_offline = (r['status'] == 'offline' or r['anydesk_status'] == 0)
                 
-                if is_actually_offline:
-                    # Node is offline (unreachable or AnyDesk stopped)
-                    now = datetime.now()
-                    
-                    # Track start of downtime if not already tracked
-                    if node_id not in OFFLINE_START:
-                        OFFLINE_START[node_id] = now
-                    
-                    # Send alert with cooldown
-                    if node_id not in LAST_ALERTS or (now - LAST_ALERTS[node_id] > ALERT_COOLDOWN):
-                        status_msg = "Unreachable" if r['status'] == 'offline' else "Stopped"
-                        send_email_alert(r['name'], r['location'], status_msg)
-                        LAST_ALERTS[node_id] = now
-                else:
-                    # Node is online/running
-                    if node_id in OFFLINE_START:
-                        # It was previously offline, now recovered!
+                with STATE_LOCK:
+                    if is_actually_offline:
+                        # POC is offline (unreachable or AnyDesk stopped)
                         now = datetime.now()
-                        downtime = now - OFFLINE_START[node_id]
-                        duration_str = format_duration(downtime)
                         
-                        send_email_alert(r['name'], r['location'], "Online", duration_str)
+                        # Track start of downtime if not already tracked
+                        if node_id not in OFFLINE_START:
+                            OFFLINE_START[node_id] = now
                         
-                        # Clear tracking
-                        del OFFLINE_START[node_id]
-                        if node_id in LAST_ALERTS:
-                            del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
+                        # Send alert with cooldown
+                        if node_id not in LAST_ALERTS or (now - LAST_ALERTS[node_id] > ALERT_COOLDOWN):
+                            status_msg = "Unreachable" if r['status'] == 'offline' else "Stopped"
+                            send_email_alert(r['name'], r['location'], status_msg)
+                            LAST_ALERTS[node_id] = now
+                    else:
+                        # POC is online/running
+                        if node_id in OFFLINE_START:
+                            # It was previously offline, now recovered!
+                            now = datetime.now()
+                            downtime = now - OFFLINE_START[node_id]
+                            duration_str = format_duration(downtime)
+                            
+                            send_email_alert(r['name'], r['location'], "Online", duration_str)
+                            
+                            # Clear tracking
+                            del OFFLINE_START[node_id]
+                            if node_id in LAST_ALERTS:
+                                del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
             
             # Periodically check for data rotation
             rotate_data()

@@ -58,6 +58,9 @@ async function fetchClients() {
     if (isFetching) return;
     isFetching = true;
 
+    const grid = document.getElementById('clients-grid');
+    const loading = grid ? grid.querySelector('.loading-state') : null;
+
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 4500);
@@ -73,6 +76,9 @@ async function fetchClients() {
     } catch (error) {
         if (error.name !== 'AbortError') {
             console.error('Fetch error:', error);
+            if (loading) {
+                loading.innerHTML = `<p style="color: var(--status-offline);">⚠️ Connection Error: Failed to load monitoring data. Please check if the server is running correctly.</p>`;
+            }
         }
     } finally {
         isFetching = false;

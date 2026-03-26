@@ -515,12 +515,14 @@ def test_email():
     except Exception as e:
         return jsonify({"error": f"SMTP Error: {str(e)}"}), 500
 
+# Initialize background poller once at startup
+def start_background_tasks():
+    logger.info("Initializing background monitoring thread...")
+    thread = threading.Thread(target=update_metrics_loop, daemon=True)
+    thread.start()
+
+start_background_tasks()
+
 if __name__ == '__main__':
-    # Start the background polling thread only once in the main process
-    # Use reloader guard to ensure it runs in the same process as the API
-    if os.environ.get("WERKZEUG_RUN_MAIN"):
-        polling_thread = threading.Thread(target=update_metrics_loop, daemon=True)
-        polling_thread.start()
-        
     # Run heavily threaded for development
     app.run(host='0.0.0.0', port=5050, threaded=True, debug=True)

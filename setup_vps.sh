@@ -36,7 +36,7 @@ User=root
 Group=root
 WorkingDirectory=$PROJECT_DIR
 Environment="PATH=$PROJECT_DIR/venv/bin"
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 4 --worker-class gevent --bind 0.0.0.0:5050 app:app
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5050 app:app
 
 [Install]
 WantedBy=multi-user.target

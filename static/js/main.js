@@ -109,7 +109,13 @@ function renderClientsGrid(clients) {
         });
 
         const loading = grid.querySelector('.loading-state');
-        if (loading && clients.length > 0) loading.remove();
+        if (loading) {
+            if (clients.length > 0) {
+                loading.remove();
+            } else {
+                loading.innerHTML = '<p style="color: var(--text-secondary); opacity: 0.6;">No POC locations added yet. Click "+ Add New POC" to start.</p>';
+            }
+        }
     });
 }
 

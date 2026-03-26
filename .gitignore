@@ -12,3 +12,6 @@ history.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation
+DEPLOY_PRIVATE.md

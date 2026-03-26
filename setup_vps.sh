@@ -14,6 +14,8 @@ apt install -y python3-pip python3-venv nginx gunicorn git sqlite3
 # 2. Create app directory if not exists
 PROJECT_DIR="/opt/assistx-monitoring"
 mkdir -p $PROJECT_DIR
+# Delete old database if exists to ensure fresh start on deployment
+[ -f "$PROJECT_DIR/history.db" ] && rm "$PROJECT_DIR/history.db"
 cp -r . $PROJECT_DIR
 cd $PROJECT_DIR
 

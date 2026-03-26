@@ -1,0 +1,11 @@
+[
+    {
+        "id": "client-1",
+        "name": "Testing",
+        "endpoint": "http://192.168.224.98:9800/metrics",
+        "location": "Jakarta Test Lab",
+        "anydesk_id": "123456789",
+        "simcard_number": "08123456789",
+        "quota_link": "https://digipos.telkomsel.com/simcardchecking/S276X08500001896311200000108131797543"
+    }
+]

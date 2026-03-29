@@ -659,10 +659,10 @@ def start_background_tasks():
         thread = threading.Thread(target=update_metrics_loop, daemon=True)
         thread.start()
 
+# Initialize data and background scraper unconditionally (Works for Flask & Gunicorn)
+sync_metrics_state()
+start_background_tasks()
+
 if __name__ == '__main__':
-    # Initialize metadata from clients.json immediately
-    sync_metrics_state()
-    # Start thread only once even with reloader
-    start_background_tasks()
     # Run heavily threaded for development
     app.run(host='0.0.0.0', port=5050, threaded=True, debug=False)

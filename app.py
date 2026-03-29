@@ -41,12 +41,12 @@ POLL_INTERVAL = 5  # Seconds
 
 # Email configuration
 EMAIL_CONFIG = {
-    "enabled": False,  # Set to True when ready to use
+    "enabled": True,
     "smtp_server": "smtp.gmail.com",
     "smtp_port": 587,
-    "sender_email": "YOUR_EMAIL@gmail.com",
-    "sender_password": "YOUR_APP_PASSWORD",
-    "receiver_email": "RECIPIENT_EMAIL@example.com"
+    "sender_email": "presalesassistx@gmail.com",
+    "sender_password": "uzsvxcqdncvqjpze",
+    "receiver_email": "presales@assistxenterprise.ai"
 }
 
 # Shared tracking dictionaries (Must be protected by STATE_LOCK)

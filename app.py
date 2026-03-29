@@ -53,7 +53,7 @@ EMAIL_CONFIG = {
 LAST_ALERTS: Dict[str, datetime] = {}
 OFFLINE_START: Dict[str, datetime] = {}
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
-ALERT_COOLDOWN = timedelta(hours=1) 
+ALERT_COOLDOWN = None # No longer used (alerts sent only on state changes)
 
 # SSE Client Management
 SSE_CLIENTS = []
@@ -450,8 +450,8 @@ def update_metrics_loop():
                         if node_id not in OFFLINE_START:
                             OFFLINE_START[node_id] = now
                         
-                        # Send alert with cooldown
-                        if node_id not in LAST_ALERTS or (now - LAST_ALERTS[node_id] > ALERT_COOLDOWN):
+                        # Send alert only once when first offline (no periodic reminders)
+                        if node_id not in LAST_ALERTS:
                             status_msg = "Offline" if r['status'] == 'offline' else "Stopped"
                             send_email_alert(r['name'], r['location'], status_msg)
                             LAST_ALERTS[node_id] = now

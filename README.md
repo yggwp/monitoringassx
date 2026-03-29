@@ -10,7 +10,7 @@ A premium, real-time monitoring dashboard designed for managing multiple POC (Pr
 -   **⏱️ Real-time Telemetry**: 5-second polling interval for CPU, Memory, and AnyDesk status.
 -   **📊 7-Day History Logs**: Automated telemetry recording with 7-day rolling window and weekly maintenance.
 -   **📩 Intelligent SMTP Alerts**:
-    *   **Offline/Unreachable Notifications**: Immediate alerts when a location is down.
+    *   **Offline Notifications**: Immediate alerts when a location is down.
     *   **Recovery Emails**: Automatic notification when a location is back online, including total downtime duration.
     *   **Cooldown Management**: Prevents inbox spamming during flapping network conditions.
 -   **🔋 Internet Quota Tracking**: Integrated Telkomsel/Digipos quota scraping with intelligent 10-minute caching.

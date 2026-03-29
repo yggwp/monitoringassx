@@ -1,1 +1,11 @@
-[]
+[
+    {
+        "id": "client-49df0e3f",
+        "name": "BSN",
+        "endpoint": "http://192.168.224.98:9800/metrics",
+        "location": "Bekasi",
+        "anydesk_id": "1808825013",
+        "simcard_number": "08131797543",
+        "quota_link": "https://digipos.telkomsel.com/simcardchecking/S276X08500001896311200000108131797543"
+    }
+]

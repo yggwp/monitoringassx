@@ -12,7 +12,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, cast
 from urllib.parse import urlparse
 import logging
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, Response
+import queue
 
 app = Flask(__name__)
 
@@ -53,6 +54,33 @@ LAST_ALERTS: Dict[str, datetime] = {}
 OFFLINE_START: Dict[str, datetime] = {}
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
 ALERT_COOLDOWN = timedelta(hours=1) 
+
+# SSE Client Management
+SSE_CLIENTS = []
+SSE_LOCK = threading.Lock()
+
+def broadcast_metrics(data):
+    """Notify all connected SSE clients of new data."""
+    # Create a stable snapshot for JSON serialization to avoid 
+    # 'RuntimeError: dictionary changed size during iteration'
+    # as the background thread mutates the metrics.
+    import copy
+    snapshot = copy.deepcopy(data)
+    with SSE_LOCK:
+        for q in SSE_CLIENTS:
+            q.put(snapshot)
+
+def trigger_single_scrape(client_config):
+    """Perform a dedicated scrape for one client and update shared state."""
+    res = fetch_client_data(client_config)
+    with METRICS_LOCK:
+        global CLIENT_METRICS
+        # Find and replace in global list
+        for i, m in enumerate(CLIENT_METRICS):
+            if m['id'] == res['id']:
+                CLIENT_METRICS[i] = res
+                break
+        broadcast_metrics(CLIENT_METRICS)
 
 def format_duration(delta: timedelta) -> str:
     """Helper to format a timedelta into a human-readable string."""
@@ -164,6 +192,60 @@ init_db()
 
 # Last known state to avoid redundant logging (client_id -> {status, anydesk_status})
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
+
+def sync_metrics_state():
+    """
+    Update global CLIENT_METRICS immediately from clients.json.
+    Ensures UI updates instantly after CRUD operations.
+    """
+    clients = load_clients()
+    with METRICS_LOCK:
+        global CLIENT_METRICS
+        # Map current metrics by ID for merging
+        existing_metrics = {m['id']: m for m in CLIENT_METRICS}
+        
+        new_metrics_list = []
+        for c in clients:
+            client_id = c['id']
+            if client_id in existing_metrics:
+                # Update metadata but keep current telemetry
+                m = existing_metrics[client_id].copy()
+                endpoint = c.get("endpoint", "")
+                m.update({
+                    "name": c.get("name"),
+                    "endpoint": endpoint,
+                    "ip_address": urlparse(endpoint).hostname if endpoint else "N/A",
+                    "location": c.get("location", "N/A"),
+                    "anydesk_id": c.get("anydesk_id", "N/A"),
+                    "simcard_number": c.get("simcard_number", "N/A"),
+                    "quota_link": c.get("quota_link", "")
+                })
+                new_metrics_list.append(m)
+            else:
+                # New POC: Initialize with defaults
+                endpoint = c.get("endpoint", "")
+                new_metrics_list.append({
+                    "id": client_id,
+                    "name": c.get("name"),
+                    "endpoint": endpoint,
+                    "ip_address": urlparse(endpoint).hostname if endpoint else "N/A",
+                    "location": c.get("location", "N/A"),
+                    "anydesk_id": c.get("anydesk_id", "N/A"),
+                    "simcard_number": c.get("simcard_number", "N/A"),
+                    "quota_link": c.get("quota_link", ""),
+                    "quota_text": "Pending...",
+                    "status": "offline",
+                    "anydesk_status": 0,
+                    "cpu_usage": 0,
+                    "memory_usage": 0,
+                    "error": "Connecting..."
+                })
+        
+        # Sort to maintain consistent order
+        new_metrics_list.sort(key=lambda x: x["id"])
+        CLIENT_METRICS = new_metrics_list
+        # Trigger immediate broadcast of the base metadata
+        broadcast_metrics(CLIENT_METRICS)
 
 def log_telemetry(results: List[Dict[str, Any]]):
     try:
@@ -288,9 +370,9 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"SCRAPE {client['name']}: CPU={result['cpu_usage']}%, Mem={result['memory_usage']}%")
             
     except requests.exceptions.Timeout:
-        result["error"] = "Connection Timeout: Unable to reach the client node."
+        result["error"] = "Connection Timeout: Target node is offline."
     except requests.exceptions.ConnectionError:
-        result["error"] = "Connection Failed: Target machine is offline or node unreachable."
+        result["error"] = "Connection Failed: Target machine is offline or unreachable."
     except requests.exceptions.RequestException as e:
         result["error"] = "Network Error: Could not retrieve metrics."
         
@@ -370,7 +452,7 @@ def update_metrics_loop():
                         
                         # Send alert with cooldown
                         if node_id not in LAST_ALERTS or (now - LAST_ALERTS[node_id] > ALERT_COOLDOWN):
-                            status_msg = "Unreachable" if r['status'] == 'offline' else "Stopped"
+                            status_msg = "Offline" if r['status'] == 'offline' else "Stopped"
                             send_email_alert(r['name'], r['location'], status_msg)
                             LAST_ALERTS[node_id] = now
                     else:
@@ -393,7 +475,27 @@ def update_metrics_loop():
         
         with METRICS_LOCK:
             global CLIENT_METRICS
-            CLIENT_METRICS = results
+            # Create a map for quick lookup
+            results_map = {r['id']: r for r in results}
+            
+            # Update only the clients that are currently in the global list
+            # and exist in our results. This avoids overwriting changes 
+            # made by sync_metrics_state (CRUD ops) during our scrape cycle.
+            for m in CLIENT_METRICS:
+                client_id = m['id']
+                if client_id in results_map:
+                    res = results_map[client_id]
+                    m.update({
+                        "status": res["status"],
+                        "anydesk_status": res["anydesk_status"],
+                        "cpu_usage": res["cpu_usage"],
+                        "memory_usage": res["memory_usage"],
+                        "quota_text": res["quota_text"],
+                        "error": res["error"]
+                    })
+            
+            # Broadcast the updated metrics
+            broadcast_metrics(CLIENT_METRICS)
         
         # Consistent server-side log for real-time verification (optional)
         # logger.debug("Metrics poller cycle complete.")
@@ -404,6 +506,27 @@ def update_metrics_loop():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/api/stream')
+def stream():
+    """SSE endpoint for real-time dashboard updates."""
+    def event_stream():
+        q = queue.Queue()
+        with SSE_LOCK:
+            SSE_CLIENTS.append(q)
+            # Send initial state
+            with METRICS_LOCK:
+                q.put(CLIENT_METRICS)
+        
+        try:
+            while True:
+                data = q.get()
+                yield f"data: {json.dumps(data)}\n\n"
+        except GeneratorExit:
+            with SSE_LOCK:
+                SSE_CLIENTS.remove(q)
+
+    return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route('/api/clients', methods=['GET', 'POST'])
 def api_clients():
@@ -428,6 +551,12 @@ def api_clients():
         try:
             with open(CLIENTS_FILE, 'w') as f:
                 json.dump(clients, f, indent=4)
+            # Instant sync for real-time UI response
+            sync_metrics_state()
+            
+            # Start immediate background scrape for the new client
+            threading.Thread(target=lambda: trigger_single_scrape(new_client), daemon=True).start()
+            
             return jsonify({"status": "success", "client": new_client}), 201
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -449,6 +578,8 @@ def manage_client(client_id):
         try:
             with open(CLIENTS_FILE, 'w') as f:
                 json.dump(clients, f, indent=4)
+            # Instant sync for real-time UI response
+            sync_metrics_state()
             return jsonify({"status": "deleted"}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -480,6 +611,12 @@ def manage_client(client_id):
         try:
             with open(CLIENTS_FILE, 'w') as f:
                 json.dump(clients, f, indent=4)
+            # Instant sync for real-time UI response
+            sync_metrics_state()
+            
+            # Start immediate background scrape for the updated client
+            threading.Thread(target=lambda: trigger_single_scrape(updated_client), daemon=True).start()
+            
             return jsonify({"status": "updated", "client": updated_client}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -510,19 +647,22 @@ def test_email():
         return jsonify({"error": "Email credentials not configured."}), 400
         
     try:
-        send_email_alert("BSN", "Bekasi", "UNREACHABLE", "0 minutes (Diagnostic)")
+        send_email_alert("BSN", "Bekasi", "OFFLINE", "0 minutes (Diagnostic)")
         return jsonify({"status": "success", "message": "Test email sent successfully."})
     except Exception as e:
         return jsonify({"error": f"SMTP Error: {str(e)}"}), 500
 
 # Initialize background poller once at startup
 def start_background_tasks():
-    logger.info("Initializing background monitoring thread...")
-    thread = threading.Thread(target=update_metrics_loop, daemon=True)
-    thread.start()
-
-start_background_tasks()
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        logger.info("Initializing background monitoring thread...")
+        thread = threading.Thread(target=update_metrics_loop, daemon=True)
+        thread.start()
 
 if __name__ == '__main__':
+    # Initialize metadata from clients.json immediately
+    sync_metrics_state()
+    # Start thread only once even with reloader
+    start_background_tasks()
     # Run heavily threaded for development
-    app.run(host='0.0.0.0', port=5050, threaded=True, debug=True)
+    app.run(host='0.0.0.0', port=5050, threaded=True, debug=False)

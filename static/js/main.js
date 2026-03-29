@@ -9,12 +9,34 @@ const itemsPerPage = 10;
 // Initialize the dashboard
 document.addEventListener('DOMContentLoaded', () => {
     fetchClients();
-    // Poll for updates every 5 seconds
-    setInterval(fetchClients, 5000);
+    setupSSE();
+    // Use polling as a slow fallback only (30 seconds)
+    setInterval(fetchClients, 30000);
     
     // Global Event Delegation for Card Actions
     setupEventDelegation();
 });
+
+function setupSSE() {
+    console.log("[SSE] Initializing real-time stream...");
+    const source = new EventSource('/api/stream');
+
+    source.onmessage = (event) => {
+        try {
+            const clients = JSON.parse(event.data);
+            console.log("[SSE] Received update for", clients.length, "clients");
+            renderClientsGrid(clients);
+            updateSyncTime();
+        } catch (e) {
+            console.error("[SSE] Error parsing broadcast:", e);
+        }
+    };
+
+    source.onerror = (err) => {
+        console.warn("[SSE] Connection lost. Fallback polling active.", err);
+        // EventSource automatically tries to reconnect, so we just log it.
+    };
+}
 
 function setupEventDelegation() {
     const grid = document.getElementById('clients-grid');
@@ -90,17 +112,27 @@ function renderClientsGrid(clients) {
     const template = document.getElementById('client-card-template');
     if (!grid || !template) return;
 
-    // Remove cards no longer in the list
     const currentIds = new Set(clients.map(c => `client-${c.id}`));
-    Array.from(grid.querySelectorAll('.client-card')).forEach(card => {
-        if (!currentIds.has(card.id)) card.remove();
+    const existingCards = grid.querySelectorAll('.client-card:not(.removing)');
+    
+    // Smooth Removal
+    existingCards.forEach(card => {
+        if (!currentIds.has(card.id)) {
+            card.classList.add('removing');
+            card.addEventListener('animationend', () => card.remove(), { once: true });
+        }
     });
 
+    // Update and Add
     requestAnimationFrame(() => {
         clients.forEach(client => {
             const cardId = `client-${client.id}`;
             let card = document.getElementById(cardId);
             
+            // If card exists but is being removed, we should stop removal
+            // but for simplicity, we'll just skip if it's .removing
+            if (card && card.classList.contains('removing')) return;
+
             if (!card) {
                 const clone = template.content.cloneNode(true);
                 const cardEl = clone.querySelector('.client-card');
@@ -114,13 +146,18 @@ function renderClientsGrid(clients) {
             }
         });
 
+        // Toggle empty state
         const loading = grid.querySelector('.loading-state');
-        if (loading) {
-            if (clients.length > 0) {
-                loading.remove();
-            } else {
-                loading.innerHTML = '<p style="color: var(--text-secondary); opacity: 0.6;">No POC locations added yet. Click "+ Add New POC" to start.</p>';
-            }
+        if (loading && clients.length > 0) loading.remove();
+        
+        if (clients.length === 0 && !grid.querySelector('.empty-notice')) {
+            const notice = document.createElement('div');
+            notice.className = 'loading-state empty-notice';
+            notice.innerHTML = '<p style="color: var(--text-secondary); opacity: 0.6;">No POC locations added yet. Click "+ Add New POC" to start.</p>';
+            grid.appendChild(notice);
+        } else if (clients.length > 0) {
+            const notice = grid.querySelector('.empty-notice');
+            if (notice) notice.remove();
         }
     });
 }
@@ -372,10 +409,29 @@ async function runEmailTest() {
 
 async function deleteClient(clientId) {
     if (!confirm('Are you sure you want to delete this POC location?')) return;
+    
+    // Optimistic UI: Start removal animation immediately
+    const card = document.getElementById(`client-${clientId}`);
+    if (card) {
+        card.classList.add('removing');
+        card.addEventListener('animationend', () => {
+            if (card.classList.contains('removing')) card.remove();
+        }, { once: true });
+    }
+
     try {
         const response = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
-        if (response.ok) fetchClients();
+        if (response.ok) {
+            // Success
+            console.log(`[CRUD] Successfully deleted client: ${clientId}`);
+        } else {
+            // Rollback if error
+            if (card) card.classList.remove('removing');
+            const err = await response.json();
+            alert(`Error: ${err.error}`);
+        }
     } catch (error) {
+        if (card) card.classList.remove('removing');
         console.error('Error deleting client:', error);
     }
 }
@@ -391,6 +447,13 @@ if (clientForm) {
         const method = clientId ? 'PUT' : 'POST';
         const url = clientId ? `/api/clients/${clientId}` : '/api/clients';
 
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalBtnText = submitBtn ? submitBtn.textContent : 'Save';
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Saving...';
+        }
+
         try {
             const response = await fetch(url, {
                 method: method,
@@ -399,6 +462,7 @@ if (clientForm) {
             });
             if (response.ok) {
                 toggleModal(false);
+                // The backend syncs and broadcasts via SSE, but we fetch to be safe
                 fetchClients();
             } else {
                 const err = await response.json();
@@ -406,6 +470,12 @@ if (clientForm) {
             }
         } catch (error) {
             console.error('Error saving client:', error);
+            alert('Failed to save POC location. Please check server connection.');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalBtnText;
+            }
         }
     };
 }

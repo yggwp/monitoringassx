@@ -421,6 +421,7 @@ def update_metrics_loop():
     """
     Background thread that periodically refreshes client metrics.
     """
+    global CLIENT_METRICS
     logger.info(f"Background thread active (Interval: {POLL_INTERVAL}s)")
     while True:
         clients = load_clients()
@@ -497,7 +498,6 @@ def update_metrics_loop():
             rotate_data()
         
         with METRICS_LOCK:
-            global CLIENT_METRICS
             # Create a map for quick lookup
             results_map = {r['id']: r for r in results}
             

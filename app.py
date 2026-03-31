@@ -53,6 +53,7 @@ EMAIL_CONFIG = {
 LAST_ALERTS: Dict[str, datetime] = {}
 OFFLINE_START: Dict[str, datetime] = {}
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
+FAILED_ATTEMPTS: Dict[str, int] = {}
 ALERT_COOLDOWN = None # No longer used (alerts sent only on state changes)
 
 # SSE Client Management
@@ -108,7 +109,7 @@ def send_email_alert(poc_name: str, location: str, status: str, duration_str: st
         full_name = f"{poc_name} at {location}" if location != "N/A" else poc_name
         
         if status == "Online":
-            subject = f"RECOVERY: {full_name} Is BACK"
+            subject = f"RECOVERY: {full_name} Is ONLINE"
             color = "#28a745"
             icon = "🟢"
             status_title = "Status: Online"
@@ -356,7 +357,7 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
         # Internal cache suppression to ensure real-time metrics from the node
         response = requests.get(
             client["endpoint"], 
-            timeout=1.5, 
+            timeout=3.0, 
             headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
         )
         if response.status_code == 200:
@@ -432,6 +433,28 @@ def update_metrics_loop():
             
             # Sort results by ID to keep order consistent
             results.sort(key=lambda x: x["id"])
+            
+            # --- DEBOUNCE LOGIC (Tolerate up to 3 consecutive failures before marking offline) ---
+            with METRICS_LOCK:
+                prev_metrics = {m['id']: m for m in CLIENT_METRICS}
+                
+            for r in results:
+                node_id = r['id']
+                if r['status'] == 'offline' or r['anydesk_status'] == 0:
+                    FAILED_ATTEMPTS[node_id] = FAILED_ATTEMPTS.get(node_id, 0) + 1
+                    
+                    # If it has failed less than 3 times, pretend it's still online
+                    if FAILED_ATTEMPTS[node_id] < 3:
+                        prev = prev_metrics.get(node_id)
+                        # Only pretend online if it was previously online
+                        if prev and prev.get('status') == 'online':
+                            r['status'] = 'online'
+                            r['anydesk_status'] = prev.get('anydesk_status', 1)
+                            r['cpu_usage'] = prev.get('cpu_usage', 0)
+                            r['memory_usage'] = prev.get('memory_usage', 0)
+                            r['error'] = 'Weak connection (Tolerating...)'
+                else:
+                    FAILED_ATTEMPTS[node_id] = 0
             
             # Log to history database
             log_telemetry(results)

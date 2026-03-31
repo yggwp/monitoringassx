@@ -12,10 +12,26 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, cast
 from urllib.parse import urlparse
 import logging
-from flask import Flask, jsonify, render_template, request, Response
+from flask import Flask, jsonify, render_template, request, Response, session, redirect, url_for
+from functools import wraps
 import queue
 
 app = Flask(__name__)
+app.secret_key = 'assistx-super-secret-key-2026'
+
+# Simple Authentication Config
+AUTH_USERNAME = "presales"
+AUTH_PASSWORD = "presales"
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'Unauthorized'}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Professional Logging Setup
 logging.basicConfig(
@@ -533,11 +549,29 @@ def update_metrics_loop():
         time.sleep(POLL_INTERVAL)
 
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        if request.form.get('username') == AUTH_USERNAME and request.form.get('password') == AUTH_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        else:
+            error = 'Invalid credentials. Please try again.'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
 @app.route('/api/stream')
+@login_required
 def stream():
     """SSE endpoint for real-time dashboard updates."""
     def event_stream():
@@ -559,6 +593,7 @@ def stream():
     return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route('/api/clients', methods=['GET', 'POST'])
+@login_required
 def api_clients():
     if request.method == 'POST':
         data = request.json
@@ -596,6 +631,7 @@ def api_clients():
         return jsonify(CLIENT_METRICS)
 
 @app.route('/api/clients/<client_id>', methods=['PUT', 'DELETE'])
+@login_required
 def manage_client(client_id):
     clients = load_clients()
     
@@ -652,6 +688,7 @@ def manage_client(client_id):
             return jsonify({"error": str(e)}), 500
 
 @app.route('/api/clients/<client_id>/history', methods=['GET'])
+@login_required
 def get_client_history(client_id):
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -669,6 +706,7 @@ def get_client_history(client_id):
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/test-email', methods=['POST'])
+@login_required
 def test_email():
     """Manual trigger to verify SMTP settings."""
     if not EMAIL_CONFIG["enabled"]:

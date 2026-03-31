@@ -115,6 +115,13 @@ def send_email_alert(poc_name: str, location: str, status: str, duration_str: st
             status_title = "Status: Online"
             status_text = "ONLINE"
             downtime_html = f"<p><strong>Total Downtime:</strong> {duration_str}</p>"
+        elif status == "Test":
+            subject = f"TEST: SMTP Configuration Diagnostic"
+            color = "#007bff"
+            icon = "🛠️"
+            status_title = "Diagnostic Email Test"
+            status_text = "SYSTEM TEST"
+            downtime_html = "<p style='color: #007bff;'><strong>Note:</strong> This is a simulation email to verify your SMTP settings. No real systems are offline.</p>"
         else:
             subject = f"CRITICAL: {full_name} Is {status.upper()}"
             color = "#dc3545"
@@ -670,7 +677,7 @@ def test_email():
         return jsonify({"error": "Email credentials not configured."}), 400
         
     try:
-        send_email_alert("BSN", "Bekasi", "OFFLINE", "0 minutes (Diagnostic)")
+        send_email_alert("Monitoring System", "Dashboard Server", "Test")
         return jsonify({"status": "success", "message": "Test email sent successfully."})
     except Exception as e:
         return jsonify({"error": f"SMTP Error: {str(e)}"}), 500

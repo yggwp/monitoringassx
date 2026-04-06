@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, cast
 from urllib.parse import urlparse
 import logging
+import copy
 from flask import Flask, jsonify, render_template, request, Response, session, redirect, url_for
 from functools import wraps
 import queue
@@ -55,6 +56,9 @@ METRICS_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
 POLL_INTERVAL = 5  # Seconds
 
+# Use a global session for connection pooling (Huge CPU & Latency optimization)
+GLOBAL_SESSION = requests.Session()
+
 # Email configuration
 EMAIL_CONFIG = {
     "enabled": True,
@@ -79,14 +83,15 @@ SSE_LOCK = threading.Lock()
 
 def broadcast_metrics(data):
     """Notify all connected SSE clients of new data."""
-    # Create a stable snapshot for JSON serialization to avoid 
-    # 'RuntimeError: dictionary changed size during iteration'
-    # as the background thread mutates the metrics.
-    import copy
-    snapshot = copy.deepcopy(data)
+    # Create a stable snapshot for JSON serialization
+    snapshot = [d.copy() for d in data] if data else []
     with SSE_LOCK:
         for q in SSE_CLIENTS:
-            q.put(snapshot)
+            try:
+                # Use non-blocking put to prevent memory leaks from slow/stale clients
+                q.put_nowait(snapshot)
+            except queue.Full:
+                pass # If queue is full, drop the frame
 
 def trigger_single_scrape(client_config):
     """Perform a dedicated scrape for one client and update shared state."""
@@ -199,6 +204,8 @@ DB_FILE = os.path.join(os.path.dirname(__file__), 'history.db')
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
+        # Enable WAL mode for high concurrency and lower disk I/O lock overhead
+        conn.execute('PRAGMA journal_mode=WAL;')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS telemetry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -299,11 +306,21 @@ def log_telemetry(results: List[Dict[str, Any]]):
     except Exception as e:
         logger.error(f"Unexpected logging error: {e}")
 
+LAST_ROTATION = 0.0
+
 def rotate_data():
     """
     Clears data older than 7 days.
-    Specifically checks for Monday midnight to perform a full 'rewrite' as requested.
     """
+    global LAST_ROTATION
+    now_ts = time.time()
+    
+    # Throttle disk operations: Only run rotation once per hour to save CPU
+    if now_ts - LAST_ROTATION < 3600:
+        return
+        
+    LAST_ROTATION = now_ts
+
     try:
         now = datetime.now()
         # Prune data older than 7 days (rolling window)
@@ -379,7 +396,8 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         # Internal cache suppression to ensure real-time metrics from the node
-        response = requests.get(
+        # Using GLOBAL_SESSION reuses TCP connections (Keep-Alive), drastically cutting CPU overhead
+        response = GLOBAL_SESSION.get(
             client["endpoint"], 
             timeout=7.0, 
             headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
@@ -411,7 +429,7 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
                 # Use a slightly longer timeout for external web scraping
                 # Also use a generic User-Agent to avoid being blocked
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-                q_resp = requests.get(quota_link, timeout=7, headers=headers)
+                q_resp = GLOBAL_SESSION.get(quota_link, timeout=7, headers=headers)
                 
                 if q_resp.status_code == 200:
                     # Primary regex for the specific Digipos structure
@@ -635,12 +653,13 @@ def index():
 def stream():
     """SSE endpoint for real-time dashboard updates."""
     def event_stream():
-        q = queue.Queue()
+        # Bounded queue prevents memory leaks if connection drops poorly
+        q = queue.Queue(maxsize=10)
         with SSE_LOCK:
             SSE_CLIENTS.append(q)
             # Send initial state
             with METRICS_LOCK:
-                q.put(CLIENT_METRICS)
+                q.put([d.copy() for d in CLIENT_METRICS])
         
         try:
             while True:

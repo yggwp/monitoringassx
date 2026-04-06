@@ -25,12 +25,15 @@ def check_anydesk_status():
                 name = proc.info.get('name')
                 status = proc.info.get('status')
                 
-                # Cek jika namanya mengandung "anydesk"
-                if name and 'anydesk' in name.lower():
-                    # Validasi akurasi: Pastikan statusnya benar-benar hidup (running/sleeping)
-                    # Hindari deteksi 'zombie' atau 'dead' process yang kadang menyangkut di sistem
-                    if status in [psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING, psutil.STATUS_DISK_SLEEP]:
-                        return 1
+                # Cek mencocokkan nama persis (bukan substring) untuk menghindari false-positive
+                # Misalnya jika script ini di-compile jadi "anydesk_exporter.exe", dia tidak akan salah mengenali dirinya sendiri
+                if name:
+                    lower_name = name.lower()
+                    if lower_name in ['anydesk', 'anydesk.exe']:
+                        # Validasi akurasi: Pastikan statusnya benar-benar hidup (running/sleeping)
+                        # Hindari deteksi 'zombie' atau 'dead' process yang kadang menyangkut di sistem
+                        if status in [psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING, psutil.STATUS_DISK_SLEEP]:
+                            return 1
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
     except Exception as e:

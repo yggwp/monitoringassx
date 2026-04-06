@@ -16,14 +16,26 @@ def check_anydesk_status():
     """
     Cross-platform check using psutil.
     Works for both Linux ('anydesk') and Windows ('AnyDesk.exe').
+    Dibuat sangat ringan dan lebih akurat menghindari "Zombie Process".
     """
-    for proc in psutil.process_iter(['name']):
-        try:
-            name = proc.info['name']
-            if name and 'anydesk' in name.lower():
-                return 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
+    try:
+        # psutil.process_iter dengan spesifik info lebih ringan dan cepat
+        for proc in psutil.process_iter(['name', 'status']):
+            try:
+                name = proc.info.get('name')
+                status = proc.info.get('status')
+                
+                # Cek jika namanya mengandung "anydesk"
+                if name and 'anydesk' in name.lower():
+                    # Validasi akurasi: Pastikan statusnya benar-benar hidup (running/sleeping)
+                    # Hindari deteksi 'zombie' atau 'dead' process yang kadang menyangkut di sistem
+                    if status in [psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING, psutil.STATUS_DISK_SLEEP]:
+                        return 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception as e:
+        print(f"Failed to iterate processes: {e}")
+        
     return 0
 
 def update_metrics_loop():

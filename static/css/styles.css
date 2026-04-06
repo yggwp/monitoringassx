@@ -392,11 +392,18 @@ body {
 .status-online .dot { background: var(--status-online); }
 
 .status-offline {
-    background: rgba(239, 68, 68, 0.1);
     color: var(--status-offline);
+    background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
 .status-offline .dot { background: var(--status-offline); }
+
+.status-warning, .status-server_offline {
+    color: var(--status-warning);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+}
+.status-warning .dot, .status-server_offline .dot { background: var(--status-warning); }
 
 
 .card-body {

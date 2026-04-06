@@ -225,7 +225,10 @@ function updateCardData(card, client) {
             if (errorCont) {
                 errorCont.style.display = 'flex';
                 const errText = errorCont.querySelector('.error-text');
-                if (errText) errText.textContent = client.error || 'Connection Failed';
+                if (errText) {
+                    errText.textContent = client.error || 'Connection Failed';
+                    errText.style.color = ''; // Reset to default
+                }
             }
         }
     } catch (e) {

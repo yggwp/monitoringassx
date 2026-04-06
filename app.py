@@ -68,9 +68,10 @@ EMAIL_CONFIG = {
 # Shared tracking dictionaries (Must be protected by STATE_LOCK)
 LAST_ALERTS: Dict[str, datetime] = {}
 OFFLINE_START: Dict[str, datetime] = {}
+REAL_DOWNTIME_START: Dict[str, datetime] = {}
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
 FAILED_ATTEMPTS: Dict[str, int] = {}
-ALERT_COOLDOWN = None # No longer used (alerts sent only on state changes)
+SUCCESS_ATTEMPTS: Dict[str, int] = {}
 
 # SSE Client Management
 SSE_CLIENTS = []
@@ -380,7 +381,7 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
         # Internal cache suppression to ensure real-time metrics from the node
         response = requests.get(
             client["endpoint"], 
-            timeout=3.0, 
+            timeout=7.0, 
             headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
         )
         if response.status_code == 200:
@@ -440,6 +441,18 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
             
     return result
 
+def check_server_online(host="8.8.8.8", port=53, timeout=3.0) -> bool:
+    """Check if the VPS itself has internet connectivity."""
+    import socket
+    try:
+        socket.setdefaulttimeout(timeout)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((host, port))
+        s.close()
+        return True
+    except OSError:
+        return False
+
 def update_metrics_loop():
     """
     Background thread that periodically refreshes client metrics.
@@ -458,27 +471,74 @@ def update_metrics_loop():
             # Sort results by ID to keep order consistent
             results.sort(key=lambda x: x["id"])
             
-            # --- DEBOUNCE LOGIC (Tolerate up to 3 consecutive failures before marking offline) ---
+            # --- ROBUST DEBOUNCE LOGIC ---
             with METRICS_LOCK:
                 prev_metrics = {m['id']: m for m in CLIENT_METRICS}
                 
+            server_is_online = None # Lazy evaluation
+                
             for r in results:
                 node_id = r['id']
-                if r['status'] == 'offline' or r['anydesk_status'] == 0:
+                raw_offline = (r['status'] == 'offline' or r['anydesk_status'] == 0)
+                
+                prev = prev_metrics.get(node_id)
+                
+                # Determine current debounced state based on previous metrics
+                current_debounced_state = 'online'
+                if prev and (prev.get('status') == 'offline' or prev.get('anydesk_status') == 0):
+                    current_debounced_state = 'offline'
+
+                if raw_offline:
+                    if FAILED_ATTEMPTS.get(node_id, 0) == 0:
+                        REAL_DOWNTIME_START[node_id] = datetime.now()
+                        
                     FAILED_ATTEMPTS[node_id] = FAILED_ATTEMPTS.get(node_id, 0) + 1
+                    SUCCESS_ATTEMPTS[node_id] = 0
                     
-                    # If it has failed less than 3 times, pretend it's still online
-                    if FAILED_ATTEMPTS[node_id] < 3:
-                        prev = prev_metrics.get(node_id)
-                        # Only pretend online if it was previously online
-                        if prev and prev.get('status') == 'online':
+                    is_solidly_offline = FAILED_ATTEMPTS[node_id] >= 12
+                    
+                    # Safety check: if a node reaches offline threshold, check server internet
+                    if is_solidly_offline and current_debounced_state == 'online':
+                        if server_is_online is None:
+                            server_is_online = check_server_online()
+                        if server_is_online is False:
+                            logger.warning(f"Server network appears down! Suppressing offline alert for {r['name']}")
+                            is_solidly_offline = False # don't transition
+                    
+                    if current_debounced_state == 'online':
+                        if not is_solidly_offline:
+                            # Not officially offline yet, pretend it's online
                             r['status'] = 'online'
                             r['anydesk_status'] = prev.get('anydesk_status', 1)
                             r['cpu_usage'] = prev.get('cpu_usage', 0)
                             r['memory_usage'] = prev.get('memory_usage', 0)
-                            r['error'] = 'Weak connection (Tolerating...)'
+                            
+                            if server_is_online is False:
+                                r['error'] = 'Weak connection (Server network down, pausing alerts...)'
+                            else:
+                                r['error'] = f'Weak connection (Tolerating {FAILED_ATTEMPTS[node_id]}/12)...'
+                    else:
+                        # Already offline, clear any weak connection messages
+                        if r.get('error') and 'Weak connection' in str(r.get('error')):
+                            r['error'] = 'Connection Timeout: Target node is offline.'
                 else:
+                    SUCCESS_ATTEMPTS[node_id] = SUCCESS_ATTEMPTS.get(node_id, 0) + 1
                     FAILED_ATTEMPTS[node_id] = 0
+                    
+                    is_solidly_online = SUCCESS_ATTEMPTS[node_id] >= 6
+                    
+                    if current_debounced_state == 'offline':
+                        if not is_solidly_online:
+                            # Not officially online yet, pretend it's offline
+                            r['status'] = 'offline'
+                            r['anydesk_status'] = prev.get('anydesk_status', 0)
+                            r['cpu_usage'] = prev.get('cpu_usage', 0)
+                            r['memory_usage'] = prev.get('memory_usage', 0)
+                            r['error'] = f'Recovering (Checking {SUCCESS_ATTEMPTS[node_id]}/6)...'
+                    else:
+                        # Already online, clear any recovering message
+                        if r.get('error') and ('Checking' in str(r.get('error')) or 'Weak connection' in str(r.get('error'))):
+                            r['error'] = None
             
             # Log to history database
             log_telemetry(results)
@@ -495,7 +555,7 @@ def update_metrics_loop():
                         
                         # Track start of downtime if not already tracked
                         if node_id not in OFFLINE_START:
-                            OFFLINE_START[node_id] = now
+                            OFFLINE_START[node_id] = REAL_DOWNTIME_START.get(node_id, now)
                         
                         # Send alert only once when first offline (no periodic reminders)
                         if node_id not in LAST_ALERTS:

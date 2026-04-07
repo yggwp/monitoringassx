@@ -418,6 +418,9 @@ def fetch_client_data(client: Dict[str, Any]) -> Dict[str, Any]:
         result["error"] = "Connection Failed: Target machine is offline or unreachable."
     except requests.exceptions.RequestException as e:
         result["error"] = "Network Error: Could not retrieve metrics."
+    except Exception as e:
+        logger.error(f"Unexpected error scraping {client.get('name')}: {e}")
+        result["error"] = "Unexpected Error: Invalid IP or format."
         
     if quota_link:
         # Check cache first
@@ -679,10 +682,14 @@ def api_clients():
         if not data:
             return jsonify({"error": "Invalid payload"}), 400
             
+        ip_val = data.get("ip", "").strip()
+        if not re.match(r'^[0-9\.]+$', ip_val):
+            return jsonify({"error": "Invalid IP Address format. Only numbers and dots are allowed."}), 400
+            
         new_client = {
             "id": f"client-{os.urandom(4).hex()}",
             "name": data.get("name", "New POC"),
-            "endpoint": f"http://{data.get('ip')}:9800/metrics",
+            "endpoint": f"http://{ip_val}:9800/metrics",
             "location": data.get("location", ""),
             "anydesk_id": data.get("anydesk_id", ""),
             "simcard_number": data.get("simcard_number", ""),
@@ -734,6 +741,10 @@ def manage_client(client_id):
         if not data:
             return jsonify({"error": "Invalid payload"}), 400
             
+        ip_val = data.get("ip", "").strip()
+        if not re.match(r'^[0-9\.]+$', ip_val):
+            return jsonify({"error": "Invalid IP Address format. Only numbers and dots are allowed."}), 400
+            
         updated = False
         updated_client = None
         for itm in clients:
@@ -741,7 +752,7 @@ def manage_client(client_id):
             if client["id"] == client_id:
                 client["name"] = data.get("name", client.get("name", "Unnamed"))
                 # Make sure to update the endpoint URL using the provided clean IP
-                client["endpoint"] = f"http://{data.get('ip')}:9800/metrics"
+                client["endpoint"] = f"http://{ip_val}:9800/metrics"
                 client["location"] = data.get("location", client.get("location", ""))
                 client["anydesk_id"] = data.get("anydesk_id", client.get("anydesk_id", ""))
                 client["simcard_number"] = data.get("simcard_number", client.get("simcard_number", ""))

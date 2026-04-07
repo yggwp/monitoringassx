@@ -68,3 +68,19 @@ Coba tes tarikan metric di komputer milik klien secara lokal lewat terminal:
 curl http://localhost:9800/metrics
 ```
 Jika command `curl` langsung mengeluarkan teks berisi `anydesk_status`, `cpu_usage`, dan `memory_usage`, maka instalasi Linux ini dianggap **BERHASIL/SUKSES 100%**. Dashboard utama Anda kini sudah bisa menghubungi IP Klien ini.
+
+---
+
+## 7. Cara Melakukan Update/Pembaruan Skrip (Jika sudah Terinstall)
+Jika ada pembaruan *bug-fix* atau optimalisasi baru pada skrip `anydesk_exporter.py` dan Anda ingin memperbaruinya pada klien yang perakitannya sudah berjalan:
+
+1. **Siapkan Skrip Terbaru**: Download atau pindahkan file `anydesk_exporter.py` yang terbaru ke PC Linux Klien tersebut.
+2. **Timpa file lamanya** di folder tempat instalasi sistem `/opt`:
+```bash
+sudo cp anydesk_exporter.py /opt/poc-monitoring/anydesk_exporter.py
+```
+3. **Restart Layanannya** agar file Python baru langsung diproses di dalam memori Background Service:
+```bash
+sudo systemctl restart anydesk-exporter
+```
+*(Selesai! Anda tidak perlu melakukan ulang langkah konfigurasi dari awal atau install ulang package).*

@@ -56,6 +56,10 @@ METRICS_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
 POLL_INTERVAL = 5  # Seconds
 
+# Warm-up period to avoid spam on startup
+STARTUP_TIME = time.time()
+WARMUP_DURATION = 120  # 2 minutes of silence after boot
+
 # Use a global session for connection pooling (Huge CPU & Latency optimization)
 GLOBAL_SESSION = requests.Session()
 
@@ -125,6 +129,15 @@ def format_duration(delta: timedelta) -> str:
 
 def send_email_alert(poc_name: str, location: str, status: str, duration_str: str = ""):
     if not EMAIL_CONFIG["enabled"] or not EMAIL_CONFIG["sender_email"]:
+        return
+
+    # PREVENT STARTUP SPAM: Skip alerts during the first 2 minutes of service uptime
+    uptime = time.time() - STARTUP_TIME
+    if status != "Test" and uptime < WARMUP_DURATION:
+        logger.info(
+            f"WARM-UP ACTIVE ({int(WARMUP_DURATION - uptime)}s remaining): "
+            f"Suppressed {status} alert for {poc_name}."
+        )
         return
 
     try:

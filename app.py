@@ -220,6 +220,7 @@ def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         # Enable WAL mode for high concurrency and lower disk I/O lock overhead
         conn.execute('PRAGMA journal_mode=WAL;')
+        conn.execute('PRAGMA synchronous=NORMAL;')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS telemetry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,6 +233,8 @@ def init_db():
                 memory_usage REAL
             )
         ''')
+        # Index for fast analytics queries (timestamp + client_id lookups)
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(timestamp, client_id);')
         conn.commit()
 
 init_db()
@@ -492,7 +495,7 @@ def update_metrics_loop():
     """
     Background thread that periodically refreshes client metrics.
     """
-    global CLIENT_METRICS
+    global CLIENT_METRICS, SERVER_WAS_OFFLINE
     logger.info(f"Background thread active (Interval: {POLL_INTERVAL}s)")
     while True:
         clients = load_clients()
@@ -596,8 +599,6 @@ def update_metrics_loop():
                 # This prevents email spam when the server's own internet is down.
                 if server_is_online is None:
                     server_is_online = check_server_online()
-                
-                global SERVER_WAS_OFFLINE
                 
                 if not server_is_online:
                     # Server has no internet — mark it and suppress ALL alerts.
@@ -872,6 +873,91 @@ def test_email():
         return jsonify({"status": "success", "message": "Test email sent successfully."})
     except Exception as e:
         return jsonify({"error": f"SMTP Error: {str(e)}"}), 500
+
+@app.route('/analytics')
+@login_required
+def analytics_page():
+    return render_template('analytics.html')
+
+@app.route('/api/analytics/summary', methods=['GET'])
+@login_required
+def analytics_summary():
+    """Returns aggregated telemetry data for charts (daily/weekly/monthly)."""
+    time_range = request.args.get('range', 'daily')
+    
+    # Determine time window and grouping
+    now = datetime.now()
+    if time_range == 'monthly':
+        since = now - timedelta(days=30)
+        # Group by day
+        group_format = '%Y-%m-%d'
+        label_format = '%d %b'
+    elif time_range == 'weekly':
+        since = now - timedelta(days=7)
+        # Group by day
+        group_format = '%Y-%m-%d'
+        label_format = '%a %d'
+    else:  # daily (default)
+        since = now - timedelta(hours=24)
+        # Group by hour
+        group_format = '%Y-%m-%d %H'
+        label_format = '%H:00'
+    
+    since_str = since.strftime('%Y-%m-%d %H:%M:%S')
+    
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            # Get aggregated data grouped by time bucket
+            cursor = conn.execute(f'''
+                SELECT 
+                    strftime('{group_format}', timestamp) as time_bucket,
+                    COUNT(CASE WHEN status = 'online' THEN 1 END) as online_count,
+                    COUNT(CASE WHEN status = 'offline' THEN 1 END) as offline_count,
+                    ROUND(AVG(cpu_usage), 1) as avg_cpu,
+                    ROUND(AVG(memory_usage), 1) as avg_memory,
+                    COUNT(*) as total_entries
+                FROM telemetry
+                WHERE timestamp > ?
+                GROUP BY time_bucket
+                ORDER BY time_bucket ASC
+            ''', (since_str,))
+            
+            rows = cursor.fetchall()
+            
+            labels = []
+            online_counts = []
+            offline_counts = []
+            avg_cpus = []
+            avg_mems = []
+            
+            for row in rows:
+                try:
+                    if time_range == 'daily':
+                        dt = datetime.strptime(row['time_bucket'], '%Y-%m-%d %H')
+                    else:
+                        dt = datetime.strptime(row['time_bucket'], '%Y-%m-%d')
+                    labels.append(dt.strftime(label_format))
+                except ValueError:
+                    labels.append(row['time_bucket'])
+                
+                online_counts.append(row['online_count'] or 0)
+                offline_counts.append(row['offline_count'] or 0)
+                avg_cpus.append(row['avg_cpu'] or 0)
+                avg_mems.append(row['avg_memory'] or 0)
+            
+            return jsonify({
+                'labels': labels,
+                'online_counts': online_counts,
+                'offline_counts': offline_counts,
+                'avg_cpu': avg_cpus,
+                'avg_memory': avg_mems,
+                'range': time_range
+            })
+    except Exception as e:
+        logger.error(f"Analytics query error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # Initialize background poller once at startup
 def start_background_tasks():

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AssistX - Analytics Dashboard</title>
+    <meta name="description" content="Analytics and performance insights for all POC monitoring locations.">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <!-- Background aesthetics -->
+    <div class="bg-blobs">
+        <div class="blob shape-1"></div>
+        <div class="blob shape-2"></div>
+        <div class="blob shape-3"></div>
+    </div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="glass-panel main-header">
+            <div class="header-content">
+                <div class="header-titles">
+                    <h1>📊 <span class="accent-text">Analytics</span> Dashboard</h1>
+                    <p class="subtitle">Performance insights and status history for all POC locations</p>
+                </div>
+                <div class="header-actions">
+                    <a href="/" class="btn-secondary btn-back" title="Back to Monitoring Dashboard">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: -2px;"><path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path></svg>Dashboard
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Summary Cards -->
+        <section class="analytics-summary">
+            <div class="analytics-card card-total">
+                <div class="analytics-card-icon">🖥️</div>
+                <div class="analytics-card-info">
+                    <span class="analytics-card-value" id="stat-total">—</span>
+                    <span class="analytics-card-label">Total Nodes</span>
+                </div>
+            </div>
+            <div class="analytics-card card-online">
+                <div class="analytics-card-icon">🟢</div>
+                <div class="analytics-card-info">
+                    <span class="analytics-card-value" id="stat-online">—</span>
+                    <span class="analytics-card-label">Online</span>
+                </div>
+            </div>
+            <div class="analytics-card card-offline">
+                <div class="analytics-card-icon">🔴</div>
+                <div class="analytics-card-info">
+                    <span class="analytics-card-value" id="stat-offline">—</span>
+                    <span class="analytics-card-label">Offline</span>
+                </div>
+            </div>
+            <div class="analytics-card card-warning">
+                <div class="analytics-card-icon">⚠️</div>
+                <div class="analytics-card-info">
+                    <span class="analytics-card-value" id="stat-critical">—</span>
+                    <span class="analytics-card-label">Critical Load</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Availability Rate -->
+        <section class="glass-panel analytics-panel">
+            <h3 class="analytics-section-title">Availability Rate</h3>
+            <div class="uptime-bar-container">
+                <div class="uptime-bar">
+                    <div class="uptime-fill" id="uptime-fill" style="width: 0%"></div>
+                </div>
+                <span class="uptime-label" id="uptime-label">—</span>
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section class="glass-panel analytics-panel">
+            <div class="chart-header">
+                <h3 class="analytics-section-title">Status & Performance Trends</h3>
+                <div class="chart-tabs">
+                    <button class="chart-tab active" data-range="daily">Daily (24h)</button>
+                    <button class="chart-tab" data-range="weekly">Weekly (7d)</button>
+                    <button class="chart-tab" data-range="monthly">Monthly (30d)</button>
+                </div>
+            </div>
+            <div class="chart-grid">
+                <div class="chart-box">
+                    <h4 class="chart-title">Online vs Offline Events</h4>
+                    <div class="chart-canvas-container">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-box">
+                    <h4 class="chart-title">Avg CPU & Memory Usage</h4>
+                    <div class="chart-canvas-container">
+                        <canvas id="resourceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Node Resource Table -->
+        <section class="glass-panel analytics-panel">
+            <h3 class="analytics-section-title">Node Resource Status (Live)</h3>
+            <div class="analytics-table-container">
+                <table class="analytics-table">
+                    <thead>
+                        <tr>
+                            <th align="left">Node Name</th>
+                            <th align="center">Location</th>
+                            <th align="center">Status</th>
+                            <th align="center">CPU</th>
+                            <th align="center">Memory</th>
+                            <th align="center">Alert</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodes-table-body">
+                        <tr><td colspan="6" style="text-align:center; color: var(--text-secondary); padding: 2rem;">Loading node data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- Chart.js via CDN (lightweight, ~60KB gzipped) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/static/js/analytics.js?v=1.0.0"></script>
+</body>
+</html>

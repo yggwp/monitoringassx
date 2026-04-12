@@ -1,4 +1,4 @@
-console.log("%c DASHBOARD V2.0.2 - STABLE SYNC ACTIVE ", "background: #222; color: #bada55; font-size: 20px;");
+console.log("%c DASHBOARD V2.2.0 - ANALYTICS UPDATE ", "background: #222; color: #bada55; font-size: 20px;");
 const activeCards = new Map();
 let isFetching = false;
 let currentHistoryClientId = null;
@@ -8,7 +8,7 @@ const itemsPerPage = 10;
 
 // Initialize the dashboard
 document.addEventListener('DOMContentLoaded', () => {
-    fetchClients();
+    fetchClientsWithRetry();
     setupSSE();
     // Use polling as a slow fallback only (30 seconds)
     setInterval(fetchClients, 30000);
@@ -16,6 +16,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Global Event Delegation for Card Actions
     setupEventDelegation();
 });
+
+// Retry initial fetch up to 3 times with 2 second delay
+async function fetchClientsWithRetry(attempts = 3) {
+    for (let i = 0; i < attempts; i++) {
+        try {
+            const response = await fetch(`/api/clients?t=${Date.now()}`);
+            if (response.ok) {
+                const clients = await response.json();
+                renderClientsGrid(clients);
+                updateSyncTime();
+                console.log(`[INIT] Dashboard loaded on attempt ${i + 1}`);
+                return;
+            }
+        } catch (e) {
+            console.warn(`[INIT] Attempt ${i + 1} failed:`, e.message);
+        }
+        if (i < attempts - 1) await new Promise(r => setTimeout(r, 2000));
+    }
+    console.error('[INIT] All fetch attempts failed. Waiting for SSE...');
+}
 
 function setupSSE() {
     console.log("[SSE] Initializing real-time stream...");
@@ -111,15 +131,6 @@ function renderClientsGrid(clients) {
     const grid = document.getElementById('clients-grid');
     const template = document.getElementById('client-card-template');
     if (!grid || !template) return;
-
-    // Store latest data for analytics
-    latestClientsData = clients;
-
-    // Auto-refresh analytics if the modal is open
-    const analyticsModal = document.getElementById('analytics-modal');
-    if (analyticsModal && analyticsModal.classList.contains('show')) {
-        updateAnalytics();
-    }
 
     const currentIds = new Set(clients.map(c => `client-${c.id}`));
     const existingCards = grid.querySelectorAll('.client-card:not(.removing)');
@@ -490,121 +501,4 @@ if (clientForm) {
             }
         }
     };
-}
-
-// ========================================
-// ANALYTICS MODAL
-// ========================================
-let latestClientsData = []; // Stores the most recent data from SSE/fetch
-
-function toggleAnalyticsModal(show) {
-    const modal = document.getElementById('analytics-modal');
-    if (!modal) return;
-    if (show) {
-        modal.classList.add('show');
-        modal.style.display = 'flex';
-        updateAnalytics();
-    } else {
-        modal.classList.remove('show');
-        setTimeout(() => { if (!modal.classList.contains('show')) modal.style.display = 'none'; }, 300);
-    }
-}
-
-function updateAnalytics() {
-    const clients = latestClientsData;
-    if (!clients || clients.length === 0) return;
-
-    const total = clients.length;
-    const onlineNodes = clients.filter(c => c.status === 'online' && c.anydesk_status === 1);
-    const offlineNodes = clients.filter(c => c.status === 'offline' || c.anydesk_status === 0);
-    const criticalNodes = clients.filter(c =>
-        c.status === 'online' && (c.cpu_usage >= 95 || c.memory_usage >= 95)
-    );
-
-    const onlineCount = onlineNodes.length;
-    const offlineCount = offlineNodes.length;
-    const criticalCount = criticalNodes.length;
-    const uptimePercent = total > 0 ? ((onlineCount / total) * 100) : 0;
-
-    // Animate values
-    animateValue('analytics-total', total);
-    animateValue('analytics-online', onlineCount);
-    animateValue('analytics-offline', offlineCount);
-    animateValue('analytics-critical', criticalCount);
-
-    // Uptime bar
-    const uptimeFill = document.getElementById('uptime-fill');
-    const uptimeLabel = document.getElementById('uptime-label');
-    if (uptimeFill) {
-        uptimeFill.style.width = `${uptimePercent}%`;
-        uptimeFill.classList.remove('low', 'medium');
-        if (uptimePercent < 50) uptimeFill.classList.add('low');
-        else if (uptimePercent < 80) uptimeFill.classList.add('medium');
-    }
-    if (uptimeLabel) uptimeLabel.textContent = `${uptimePercent.toFixed(1)}%`;
-
-    // Build table
-    const tbody = document.getElementById('analytics-table-body');
-    if (!tbody) return;
-
-    // Sort: offline first, then by highest CPU/memory
-    const sorted = [...clients].sort((a, b) => {
-        const aOff = (a.status === 'offline' || a.anydesk_status === 0) ? 0 : 1;
-        const bOff = (b.status === 'offline' || b.anydesk_status === 0) ? 0 : 1;
-        if (aOff !== bOff) return aOff - bOff;
-        const aMax = Math.max(a.cpu_usage || 0, a.memory_usage || 0);
-        const bMax = Math.max(b.cpu_usage || 0, b.memory_usage || 0);
-        return bMax - aMax;
-    });
-
-    tbody.innerHTML = sorted.map(c => {
-        const isOffline = c.status === 'offline' || c.anydesk_status === 0;
-        const statusBadge = isOffline
-            ? '<span class="a-badge a-badge-offline">Offline</span>'
-            : '<span class="a-badge a-badge-online">Online</span>';
-
-        const cpu = parseFloat(c.cpu_usage) || 0;
-        const mem = parseFloat(c.memory_usage) || 0;
-        const cpuClass = cpu >= 95 ? 'value-critical' : 'value-normal';
-        const memClass = mem >= 95 ? 'value-critical' : 'value-normal';
-
-        let alertTag = '<span class="a-alert-tag a-alert-ok">OK</span>';
-        if (isOffline) {
-            alertTag = '<span class="a-alert-tag a-alert-critical">Down</span>';
-        } else if (cpu >= 95 && mem >= 95) {
-            alertTag = '<span class="a-alert-tag a-alert-critical">CPU + MEM</span>';
-        } else if (cpu >= 95) {
-            alertTag = '<span class="a-alert-tag a-alert-critical">High CPU</span>';
-        } else if (mem >= 95) {
-            alertTag = '<span class="a-alert-tag a-alert-critical">High MEM</span>';
-        }
-
-        return `
-            <tr>
-                <td>${c.name || 'Unknown'}</td>
-                <td align="center">${statusBadge}</td>
-                <td align="center" class="${cpuClass}">${isOffline ? '—' : cpu.toFixed(1) + '%'}</td>
-                <td align="center" class="${memClass}">${isOffline ? '—' : mem.toFixed(1) + '%'}</td>
-                <td align="center">${alertTag}</td>
-            </tr>
-        `;
-    }).join('');
-}
-
-function animateValue(elementId, target) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    const current = parseInt(el.textContent) || 0;
-    if (current === target) return;
-
-    const duration = 400;
-    const startTime = performance.now();
-
-    function step(timestamp) {
-        const progress = Math.min((timestamp - startTime) / duration, 1);
-        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-        el.textContent = Math.round(current + (target - current) * eased);
-        if (progress < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
 }

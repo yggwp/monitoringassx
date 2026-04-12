@@ -76,6 +76,7 @@ REAL_DOWNTIME_START: Dict[str, datetime] = {}
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
 FAILED_ATTEMPTS: Dict[str, int] = {}
 SUCCESS_ATTEMPTS: Dict[str, int] = {}
+SERVER_WAS_OFFLINE: bool = False  # Tracks if the server itself experienced an outage
 
 # SSE Client Management
 SSE_CLIENTS = []
@@ -496,7 +497,9 @@ def update_metrics_loop():
             with METRICS_LOCK:
                 prev_metrics = {m['id']: m for m in CLIENT_METRICS}
                 
+            # Pre-check server connectivity once per cycle (lazy but shared)
             server_is_online = None # Lazy evaluation
+            server_checked = False
                 
             for r in results:
                 node_id = r['id']
@@ -564,39 +567,75 @@ def update_metrics_loop():
             # Log to history database
             log_telemetry(results)
             
-            # Check for offline locations and send alerts under lock
-            for r in results:
-                node_id = r['id']
-                is_actually_offline = (r['status'] == 'offline' or r['anydesk_status'] == 0)
-                
-                with STATE_LOCK:
-                    if is_actually_offline:
-                        # POC is offline (unreachable or AnyDesk stopped)
-                        now = datetime.now()
+            # --- SERVER CONNECTIVITY GATE FOR EMAIL ALERTS ---
+            # Check server connectivity before processing any alerts.
+            # This prevents email spam when the server's own internet is down.
+            if server_is_online is None:
+                server_is_online = check_server_online()
+            
+            global SERVER_WAS_OFFLINE
+            
+            if not server_is_online:
+                # Server has no internet — mark it and suppress ALL alerts.
+                # All "offline" readings are unreliable because the server can't reach anyone.
+                if not SERVER_WAS_OFFLINE:
+                    logger.warning("SERVER INTERNET DOWN — All alerts suppressed until connectivity is restored.")
+                SERVER_WAS_OFFLINE = True
+                # Do NOT process any alerts this cycle
+            else:
+                # Server is online. Check if we're recovering from a server outage.
+                if SERVER_WAS_OFFLINE:
+                    # Server just came back online after being down.
+                    # WIPE all tracking state so no false offline/recovery emails are sent.
+                    # The system will start fresh as if it just booted up.
+                    logger.info(
+                        "SERVER INTERNET RESTORED — Resetting all alert tracking. "
+                        "No false offline/recovery emails will be sent."
+                    )
+                    with STATE_LOCK:
+                        LAST_ALERTS.clear()
+                        OFFLINE_START.clear()
+                        REAL_DOWNTIME_START.clear()
+                    FAILED_ATTEMPTS.clear()
+                    SUCCESS_ATTEMPTS.clear()
+                    SERVER_WAS_OFFLINE = False
+                    # Skip alert processing this cycle — let the next cycle
+                    # establish a clean baseline of which nodes are truly online/offline.
+                else:
+                    # Normal operation: server is online, was not offline before.
+                    # Process alerts normally.
+                    for r in results:
+                        node_id = r['id']
+                        is_actually_offline = (r['status'] == 'offline' or r['anydesk_status'] == 0)
                         
-                        # Track start of downtime if not already tracked
-                        if node_id not in OFFLINE_START:
-                            OFFLINE_START[node_id] = REAL_DOWNTIME_START.get(node_id, now)
-                        
-                        # Send alert only once when first offline (no periodic reminders)
-                        if node_id not in LAST_ALERTS:
-                            status_msg = "Offline" if r['status'] == 'offline' else "Stopped"
-                            send_email_alert(r['name'], r['location'], status_msg)
-                            LAST_ALERTS[node_id] = now
-                    else:
-                        # POC is online/running
-                        if node_id in OFFLINE_START:
-                            # It was previously offline, now recovered!
-                            now = datetime.now()
-                            downtime = now - OFFLINE_START[node_id]
-                            duration_str = format_duration(downtime)
-                            
-                            send_email_alert(r['name'], r['location'], "Online", duration_str)
-                            
-                            # Clear tracking
-                            del OFFLINE_START[node_id]
-                            if node_id in LAST_ALERTS:
-                                del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
+                        with STATE_LOCK:
+                            if is_actually_offline:
+                                # POC is offline (unreachable or AnyDesk stopped)
+                                now = datetime.now()
+                                
+                                # Track start of downtime if not already tracked
+                                if node_id not in OFFLINE_START:
+                                    OFFLINE_START[node_id] = REAL_DOWNTIME_START.get(node_id, now)
+                                
+                                # Send alert only once when first offline (no periodic reminders)
+                                if node_id not in LAST_ALERTS:
+                                    status_msg = "Offline" if r['status'] == 'offline' else "Stopped"
+                                    send_email_alert(r['name'], r['location'], status_msg)
+                                    LAST_ALERTS[node_id] = now
+                            else:
+                                # POC is online/running
+                                if node_id in OFFLINE_START:
+                                    # It was previously offline, now recovered!
+                                    now = datetime.now()
+                                    downtime = now - OFFLINE_START[node_id]
+                                    duration_str = format_duration(downtime)
+                                    
+                                    send_email_alert(r['name'], r['location'], "Online", duration_str)
+                                    
+                                    # Clear tracking
+                                    del OFFLINE_START[node_id]
+                                    if node_id in LAST_ALERTS:
+                                        del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
             
             # Periodically check for data rotation
             rotate_data()

@@ -46,7 +46,7 @@ pip install -r requirements.txt
 ```bash
 python app.py
 ```
-Access the dashboard at `http://localhost:5050`.
+Access the dashboard at `http://localhost:5060`.
 
 ## 🌐 Deployment
 

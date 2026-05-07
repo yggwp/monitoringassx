@@ -12,7 +12,7 @@ apt update && apt upgrade -y
 apt install -y python3-pip python3-venv nginx gunicorn git sqlite3
 
 # 2. Create app directory if not exists
-PROJECT_DIR="/opt/assistx-monitoring"
+PROJECT_DIR="/opt/assistx-monitoring-v2"
 mkdir -p $PROJECT_DIR
 # Ensure database is kept safe between deployments
 cp -r . $PROJECT_DIR
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 pip install gunicorn gevent
 
 # 4. Create Systemd Service
-cat <<EOF > /etc/systemd/system/assistx.service
+cat <<EOF > /etc/systemd/system/assistx_v2.service
 [Unit]
 Description=AssistX POC Monitoring Dashboard
 After=network.target
@@ -35,7 +35,7 @@ User=root
 Group=root
 WorkingDirectory=$PROJECT_DIR
 Environment="PATH=$PROJECT_DIR/venv/bin"
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5050 app:app
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5060 app:app
 
 [Install]
 WantedBy=multi-user.target
@@ -43,15 +43,15 @@ EOF
 
 # 5. Start and Enable Service
 systemctl daemon-reload
-systemctl enable assistx
-systemctl restart assistx
+systemctl enable assistx_v2
+systemctl restart assistx_v2
 
 # 6. Setup Firewall (Optional)
-ufw allow 5050
+ufw allow 5060
 ufw allow 80
 ufw allow 443
 
 echo "------------------------------------------------"
 echo " DEPLOYMENT COMPLETE! "
-echo " Dashboard running at: http://YOUR_VPS_IP:5050 "
+echo " Dashboard running at: http://YOUR_VPS_IP:5060 "
 echo "------------------------------------------------"

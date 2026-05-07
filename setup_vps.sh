@@ -41,7 +41,10 @@ ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 1 --worker-class gevent --bin
 WantedBy=multi-user.target
 EOF
 
-# 5. Start and Enable Service
+# 5. Stop Old Service & Start New Service
+systemctl stop assistx || true
+systemctl disable assistx || true
+
 systemctl daemon-reload
 systemctl enable assistx_v2
 systemctl restart assistx_v2

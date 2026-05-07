@@ -712,9 +712,11 @@ def stream():
     return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route('/api/clients', methods=['GET', 'POST'])
-@login_required
 def api_clients():
     if request.method == 'POST':
+        if not session.get('logged_in'):
+            return jsonify({"error": "Unauthorized"}), 401
+            
         data = request.json
         if not data:
             return jsonify({"error": "Invalid payload"}), 400
@@ -849,16 +851,7 @@ def get_client_history(client_id):
 @login_required
 def test_email():
     """Manual trigger to verify SMTP settings."""
-    if not EMAIL_CONFIG["enabled"]:
-        return jsonify({"error": "Email alerts are currently disabled in configuration."}), 400
-    if not EMAIL_CONFIG["sender_email"] or not EMAIL_CONFIG["sender_password"]:
-        return jsonify({"error": "Email credentials not configured."}), 400
-        
-    try:
-        send_email_alert("Monitoring System", "Dashboard Server", "Test")
-        return jsonify({"status": "success", "message": "Test email sent successfully."})
-    except Exception as e:
-        return jsonify({"error": f"SMTP Error: {str(e)}"}), 500
+    return jsonify({"error": "Email alerts are permanently disabled."}), 400
 
 @app.route('/analytics')
 @login_required

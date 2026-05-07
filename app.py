@@ -6,8 +6,7 @@ import re
 import time
 import threading
 import sqlite3
-import smtplib
-from email.mime.text import MIMEText
+
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, cast
 from urllib.parse import urlparse
@@ -63,15 +62,7 @@ WARMUP_DURATION = 120  # 2 minutes of silence after boot
 # Use a global session for connection pooling (Huge CPU & Latency optimization)
 GLOBAL_SESSION = requests.Session()
 
-# Email configuration
-EMAIL_CONFIG = {
-    "enabled": True,
-    "smtp_server": "smtp.gmail.com",
-    "smtp_port": 587,
-    "sender_email": "presalesassistx@gmail.com",
-    "sender_password": "uzsvxcqdncvqjpze",
-    "receiver_email": "presales@assistxenterprise.ai"
-}
+
 
 # Shared tracking dictionaries (Must be protected by STATE_LOCK)
 LAST_ALERTS: Dict[str, datetime] = {}
@@ -127,91 +118,7 @@ def format_duration(delta: timedelta) -> str:
         parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
     return ", ".join(parts)
 
-def send_email_alert(poc_name: str, location: str, status: str, duration_str: str = ""):
-    if not EMAIL_CONFIG["enabled"] or not EMAIL_CONFIG["sender_email"]:
-        return
-
-    # PREVENT STARTUP SPAM: Skip alerts during the first 2 minutes of service uptime
-    uptime = time.time() - STARTUP_TIME
-    if status != "Test" and uptime < WARMUP_DURATION:
-        logger.info(
-            f"WARM-UP ACTIVE ({int(WARMUP_DURATION - uptime)}s remaining): "
-            f"Suppressed {status} alert for {poc_name}."
-        )
-        return
-
-    try:
-        # Theme configuration
-        full_name = f"{poc_name} at {location}" if location != "N/A" else poc_name
-        
-        if status == "Online":
-            subject = f"RECOVERY: {full_name} Is ONLINE"
-            color = "#28a745"
-            icon = "🟢"
-            status_title = "Status: Online"
-            status_text = "ONLINE"
-            downtime_html = f"<p><strong>Total Downtime:</strong> {duration_str}</p>"
-        elif status == "Test":
-            subject = f"TEST: SMTP Configuration Diagnostic"
-            color = "#007bff"
-            icon = "🛠️"
-            status_title = "Diagnostic Email Test"
-            status_text = "SYSTEM TEST"
-            downtime_html = "<p style='color: #007bff;'><strong>Note:</strong> This is a simulation email to verify your SMTP settings. No real systems are offline.</p>"
-        else:
-            subject = f"CRITICAL: {full_name} Is {status.upper()}"
-            color = "#dc3545"
-            icon = "🔴"
-            status_title = f"Status: {status.upper()}"
-            status_text = status.upper()
-            downtime_html = ""
-
-        html_body = f"""
-        <html>
-        <head>
-            <style>
-                body {{ margin: 0; padding: 0; background-color: #f4f4f4; }}
-            </style>
-        </head>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f4f4;">
-            <div style="height: 40px;"></div>
-            <div style="max-width: 550px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0; box-shadow: 0 4px 10px rgba(0,0,0,0.08);">
-                <div style="background-color: {color}; color: #ffffff; padding: 15px 20px; text-align: center;">
-                    <h2 style="margin: 0; font-size: 20px;">{icon} {status_title}</h2>
-                </div>
-                <div style="padding: 25px; color: #333333; line-height: 1.5;">
-                    <p style="font-size: 15px; margin-top: 0;">The status of POC <strong>{poc_name}</strong> at <strong>{location}</strong> has changed:</p>
-                    <div style="background-color: #f9f9f9; padding: 15px 20px; border-radius: 6px; margin: 15px 0; border: 1px solid #f0f0f0;">
-                        <p style="margin: 3px 0; font-size: 14px;"><strong>POC Name:</strong> {poc_name}</p>
-                        <p style="margin: 3px 0; font-size: 14px;"><strong>Location:</strong> {location}</p>
-                        <p style="margin: 3px 0; font-size: 14px;"><strong>Current Status:</strong> <span style="background-color: {color}; color: #ffffff; padding: 2px 8px; border-radius: 10px; font-weight: bold; font-size: 11px;">{status_text}</span></p>
-                        {downtime_html}
-                    </div>
-                    <p style="font-size: 13px; color: #666666; margin-bottom: 0;">Please check your dashboard for real-time monitoring and history logs.</p>
-                </div>
-                <div style="background-color: #f8f9fa; color: #999999; padding: 15px; text-align: center; font-size: 11px; border-top: 1px solid #eeeeee;">
-                    Sent by <strong>POC Monitoring Assistant</strong><br>
-                    Real-time monitoring system
-                </div>
-            </div>
-            <div style="height: 40px;"></div>
-        </body>
-        </html>
-        """
-
-        msg = MIMEText(html_body, 'html')
-        msg['Subject'] = subject
-        msg['From'] = f"POC Monitoring Assistant <{EMAIL_CONFIG['sender_email']}>"
-        msg['To'] = EMAIL_CONFIG['receiver_email']
-
-        with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
-            server.starttls()
-            server.login(EMAIL_CONFIG["sender_email"], EMAIL_CONFIG["sender_password"])
-            server.send_message(msg)
-        print(f"Final refined alert email sent successfully to {EMAIL_CONFIG['receiver_email']}")
-    except Exception as e:
-        logger.error(f"Failed to send final refined alert email: {e}")
-        raise e
+# Email alerts removed as per user request
 
 # Database configuration
 DB_FILE = os.path.join(os.path.dirname(__file__), 'history.db')
@@ -233,11 +140,61 @@ def init_db():
                 memory_usage REAL
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS clients (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                endpoint TEXT,
+                location TEXT,
+                anydesk_id TEXT,
+                simcard_number TEXT,
+                quota_link TEXT,
+                offline_since DATETIME
+            )
+        ''')
         # Index for fast analytics queries (timestamp + client_id lookups)
         conn.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(timestamp, client_id);')
         conn.commit()
 
+def migrate_json_to_db():
+    if os.path.exists(CLIENTS_FILE):
+        try:
+            with open(CLIENTS_FILE, 'r') as f:
+                clients = json.load(f)
+            if clients:
+                with sqlite3.connect(DB_FILE) as conn:
+                    for c in clients:
+                        conn.execute('''
+                            INSERT OR IGNORE INTO clients (id, name, endpoint, location, anydesk_id, simcard_number, quota_link)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ''', (c.get('id'), c.get('name'), c.get('endpoint'), c.get('location'), c.get('anydesk_id'), c.get('simcard_number'), c.get('quota_link')))
+                    conn.commit()
+            # Rename the file to .backup
+            os.rename(CLIENTS_FILE, CLIENTS_FILE + ".backup")
+            logger.info("Migrated clients.json to SQLite database successfully.")
+        except Exception as e:
+            logger.error(f"Failed to migrate clients.json: {e}")
+
 init_db()
+migrate_json_to_db()
+
+def load_offline_state_from_db():
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, offline_since FROM clients WHERE offline_since IS NOT NULL").fetchall()
+            with STATE_LOCK:
+                for r in rows:
+                    if r['offline_since']:
+                        try:
+                            # Parse string to datetime
+                            OFFLINE_START[r['id']] = datetime.strptime(r['offline_since'], '%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            pass
+    except Exception as e:
+        logger.error(f"Failed to load offline state: {e}")
+
+load_offline_state_from_db()
 
 # Last known state to avoid redundant logging (client_id -> {status, anydesk_status})
 LAST_STATE: Dict[str, Dict[str, Any]] = {}
@@ -362,10 +319,15 @@ def add_header(response):
 
 def load_clients() -> List[Dict[str, Any]]:
     try:
-        with open(CLIENTS_FILE, 'r') as f:
-            return json.load(f)
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, name, endpoint, location, anydesk_id, simcard_number, quota_link FROM clients").fetchall()
+            clients = []
+            for r in rows:
+                clients.append(dict(r))
+            return clients
     except Exception as e:
-        print(f"Error loading {CLIENTS_FILE}: {e}")
+        logger.error(f"Error loading clients from DB: {e}")
         return []
 
 def parse_prometheus_metrics(text):
@@ -640,12 +602,18 @@ def update_metrics_loop():
                                     
                                     # Track start of downtime if not already tracked
                                     if node_id not in OFFLINE_START:
-                                        OFFLINE_START[node_id] = REAL_DOWNTIME_START.get(node_id, now)
+                                        offline_time = REAL_DOWNTIME_START.get(node_id, now)
+                                        OFFLINE_START[node_id] = offline_time
+                                        # Persist to DB
+                                        try:
+                                            with sqlite3.connect(DB_FILE) as conn:
+                                                conn.execute('UPDATE clients SET offline_since = ? WHERE id = ?', (offline_time.strftime('%Y-%m-%d %H:%M:%S'), node_id))
+                                                conn.commit()
+                                        except Exception:
+                                            pass
                                     
-                                    # Send alert only once when first offline (no periodic reminders)
+                                    # Log only once when first offline (no periodic reminders)
                                     if node_id not in LAST_ALERTS:
-                                        status_msg = "Offline" if r['status'] == 'offline' else "Stopped"
-                                        send_email_alert(r['name'], r['location'], status_msg)
                                         LAST_ALERTS[node_id] = now
                                 else:
                                     # POC is online/running
@@ -655,10 +623,15 @@ def update_metrics_loop():
                                         downtime = now - OFFLINE_START[node_id]
                                         duration_str = format_duration(downtime)
                                         
-                                        send_email_alert(r['name'], r['location'], "Online", duration_str)
-                                        
                                         # Clear tracking
                                         del OFFLINE_START[node_id]
+                                        try:
+                                            with sqlite3.connect(DB_FILE) as conn:
+                                                conn.execute('UPDATE clients SET offline_since = NULL WHERE id = ?', (node_id,))
+                                                conn.commit()
+                                        except Exception:
+                                            pass
+                                            
                                         if node_id in LAST_ALERTS:
                                             del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
             
@@ -760,12 +733,13 @@ def api_clients():
             "quota_link": data.get("quota_link", "")
         }
         
-        clients = load_clients()
-        clients.append(new_client)
-        
         try:
-            with open(CLIENTS_FILE, 'w') as f:
-                json.dump(clients, f, indent=4)
+            with sqlite3.connect(DB_FILE) as conn:
+                conn.execute('''
+                    INSERT INTO clients (id, name, endpoint, location, anydesk_id, simcard_number, quota_link)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (new_client['id'], new_client['name'], new_client['endpoint'], new_client['location'], new_client['anydesk_id'], new_client['simcard_number'], new_client['quota_link']))
+                conn.commit()
             # Instant sync for real-time UI response
             sync_metrics_state()
             
@@ -786,14 +760,20 @@ def manage_client(client_id):
     clients = load_clients()
     
     if request.method == 'DELETE':
-        initial_count = len(clients)
-        clients = [c for c in clients if c["id"] != client_id]
-        if len(clients) == initial_count:
-            return jsonify({"error": "Client not found"}), 404
-            
         try:
-            with open(CLIENTS_FILE, 'w') as f:
-                json.dump(clients, f, indent=4)
+            with sqlite3.connect(DB_FILE) as conn:
+                cursor = conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+                conn.commit()
+                if cursor.rowcount == 0:
+                    return jsonify({"error": "Client not found"}), 404
+            
+            # Remove from tracking state
+            with STATE_LOCK:
+                if client_id in OFFLINE_START:
+                    del OFFLINE_START[client_id]
+                if client_id in LAST_ALERTS:
+                    del LAST_ALERTS[client_id]
+            
             # Instant sync for real-time UI response
             sync_metrics_state()
             return jsonify({"status": "deleted"}), 200
@@ -829,8 +809,14 @@ def manage_client(client_id):
             return jsonify({"error": "Client not found"}), 404
             
         try:
-            with open(CLIENTS_FILE, 'w') as f:
-                json.dump(clients, f, indent=4)
+            with sqlite3.connect(DB_FILE) as conn:
+                conn.execute('''
+                    UPDATE clients 
+                    SET name = ?, endpoint = ?, location = ?, anydesk_id = ?, simcard_number = ?, quota_link = ?
+                    WHERE id = ?
+                ''', (updated_client["name"], updated_client["endpoint"], updated_client["location"], updated_client["anydesk_id"], updated_client["simcard_number"], updated_client["quota_link"], client_id))
+                conn.commit()
+            
             # Instant sync for real-time UI response
             sync_metrics_state()
             

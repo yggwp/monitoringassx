@@ -1,0 +1,29 @@
+[
+    {
+        "id": "client-f41a6753",
+        "name": "BNI",
+        "endpoint": "http://192.168.224.71:9800/metrics",
+        "location": "Stasiun Juanda",
+        "anydesk_id": "1040515525",
+        "simcard_number": "08131797543",
+        "quota_link": "https://digipos.telkomsel.com/simcardchecking/S276X08500001896311200000108131797543"
+    },
+    {
+        "id": "client-c2fb0712",
+        "name": "BNI",
+        "endpoint": "http://192.168.224.70:9800/metrics",
+        "location": "Pos Besar",
+        "anydesk_id": "1308766238",
+        "simcard_number": "082310572264",
+        "quota_link": "https://digipos.telkomsel.com/simcardchecking/S261X065000010570203100001082310572264"
+    },
+    {
+        "id": "client-5f0d3202",
+        "name": "BNI",
+        "endpoint": "http://192.168.224.65:9800/metrics",
+        "location": "Pasar Reges",
+        "anydesk_id": "1556109192",
+        "simcard_number": "08131038819",
+        "quota_link": "https://digipos.telkomsel.com/simcardchecking/S281X08500001885917620000108131038819"
+    }
+]

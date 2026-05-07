@@ -49,12 +49,31 @@ systemctl daemon-reload
 systemctl enable assistx_v2
 systemctl restart assistx_v2
 
-# 6. Setup Firewall (Optional)
+# 6. Configure NGINX (Reverse Proxy)
+cat <<EOF > /etc/nginx/sites-available/assistx_v2
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:5060;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/assistx_v2 /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+systemctl restart nginx
+
+# 7. Setup Firewall (Optional)
 ufw allow 5060
 ufw allow 80
 ufw allow 443
 
 echo "------------------------------------------------"
 echo " DEPLOYMENT COMPLETE! "
-echo " Dashboard running at: http://YOUR_VPS_IP:5060 "
+echo " Dashboard running at: http://YOUR_VPS_IP/ (Port 80 via NGINX)"
+echo " Direct access also available at: http://YOUR_VPS_IP:5060 "
 echo "------------------------------------------------"

@@ -7,12 +7,19 @@ __pycache__/
 
 # Database
 *.db
-history.db
+*.db-shm
+*.db-wal
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Documentation
-DEPLOY_PRIVATE.md
+# App Data
 clients.json
+clients.json.backup
+clients_backup.json
+serviceAccountKey.json
+
+# Logs & Binaries
+*.log
+ngrok

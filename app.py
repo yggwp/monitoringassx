@@ -15,6 +15,8 @@ import copy
 from flask import Flask, jsonify, render_template, request, Response, session, redirect, url_for
 from functools import wraps
 import queue
+import firebase_admin
+from firebase_admin import credentials, messaging
 
 app = Flask(__name__)
 app.secret_key = 'assistx-super-secret-key-2026'
@@ -40,6 +42,33 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+# Firebase Initialization
+try:
+    # Assuming serviceAccountKey.json is placed in the same directory
+    cred = credentials.Certificate(os.path.join(os.path.dirname(__file__), 'serviceAccountKey.json'))
+    firebase_admin.initialize_app(cred)
+    FIREBASE_ENABLED = True
+    logger.info("Firebase initialized successfully.")
+except Exception as e:
+    logger.warning(f"Firebase not initialized (ensure serviceAccountKey.json exists): {e}")
+    FIREBASE_ENABLED = False
+
+def send_push_notification(title, body):
+    if not FIREBASE_ENABLED:
+        return
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            topic='alerts',
+        )
+        response = messaging.send(message)
+        logger.info(f"FCM Push Sent: {response}")
+    except Exception as e:
+        logger.error(f"FCM Push Failed: {e}")
 
 # Path to the clients configuration
 CLIENTS_FILE = os.path.join(os.path.dirname(__file__), 'clients.json')
@@ -615,6 +644,10 @@ def update_metrics_loop():
                                     # Log only once when first offline (no periodic reminders)
                                     if node_id not in LAST_ALERTS:
                                         LAST_ALERTS[node_id] = now
+                                        send_push_notification(
+                                            title="⚠️ PC Offline Alert",
+                                            body=f"{r['name']} ({r['location']}) is OFFLINE!"
+                                        )
                                 else:
                                     # POC is online/running
                                     if node_id in OFFLINE_START:
@@ -634,6 +667,10 @@ def update_metrics_loop():
                                             
                                         if node_id in LAST_ALERTS:
                                             del LAST_ALERTS[node_id] # Reset alert cooldown on recovery
+                                            send_push_notification(
+                                                title="✅ PC Recovered",
+                                                body=f"{r['name']} ({r['location']}) is back ONLINE! (Downtime: {duration_str})"
+                                            )
             
             # Periodically check for data rotation
             rotate_data()
@@ -752,9 +789,16 @@ def api_clients():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    # Handle GET: Return cached metrics immediately
+    # Handle GET: Return cached metrics immediately with Android aliasing
     with METRICS_LOCK:
-        return jsonify(CLIENT_METRICS)
+        android_metrics = []
+        for m in CLIENT_METRICS:
+            android_m = m.copy()
+            android_m['anydesk'] = m.get('anydesk_id', '')
+            android_m['ip'] = m.get('ip_address', '')
+            android_m['quota'] = m.get('quota_text', '')
+            android_metrics.append(android_m)
+        return jsonify(android_metrics)
 
 @app.route('/api/clients/<client_id>', methods=['PUT', 'DELETE'])
 @login_required
